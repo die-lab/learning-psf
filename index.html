@@ -164,8 +164,10 @@ pre.fmt{margin:0;background:var(--surface);border-radius:10px;padding:12px;font-
 
 <script>
 "use strict";
-/* Per cambiare spettacolo: sostituisci copione.txt e aggiorna il titolo qui sotto. */
-var CONFIG={title:"Ritorno all’Olimpo",file:"copione.txt"};
+/* I copioni stanno nella cartella "copioni" della repository: ogni file .docx o .txt
+   aggiunto lì compare da solo nell'elenco. owner e repo servono solo se la pagina
+   non è aperta da <owner>.github.io/<repo>/. */
+var CONFIG={owner:"die-lab",repo:"learning-psf",dir:"copioni"};
 var loadErr=false;
 /* ---------- lettura del copione ---------- */
 var SCENE_RE=/^(?:(?:scena|atto|quadro|parte|scene|act)\s+(?:\d+|[ivxlcdm]+|prim[ao]|second[ao]|terz[ao]|quart[ao]|quint[ao]|sest[ao]|unic[ao])|prologo|epilogo)(?:\s*[-–—:.,]\s*(?!-)\S.{0,60})?$/i;
@@ -195,6 +197,7 @@ function parseScript(text){
     var r=rows[i];
     if(SCENE_RE.test(r)&&r.indexOf("--")<0){started=true;scenes.push(r);sc=scenes.length-1;items.push({type:"scene",text:r,scene:sc});continue;}
     if(!started) continue;
+    if(/^(indice|sommario)$/i.test(r)) break;
     var m=r.match(/^([^:]{1,48}?)\s*:\s*(\S.*)$/),sp=m&&speakerName(m[1]);
     if(sp){pushLine(sp,m[2]);continue;}
     items.push({type:"dir",text:r,scene:sc});
@@ -275,21 +278,64 @@ function compare(expected,said){
 
 /* ---------- stato ---------- */
 var KEY="suggeritore.v1";
-var BUILTIN={id:"builtin",title:CONFIG.title,text:"",builtin:true};
-var store={scripts:[],cur:"builtin",prefs:{},prog:{},ctx:1,voice:true,hide:true};
+var REPO=[];
+var store={scripts:[],cur:"",prefs:{},prog:{},ctx:1,voice:true,hide:true,list:null,rc:null};
 try{var saved=JSON.parse(localStorage.getItem(KEY)||"null");if(saved&&typeof saved==="object")Object.assign(store,saved);}catch(e){}
 var saveFailed=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(store));saveFailed=false;}catch(e){saveFailed=true;}}
-function allScripts(){return [BUILTIN].concat(store.scripts);}
+function allScripts(){return REPO.concat(store.scripts);}
 function hashId(t){var h=5381;for(var i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return "c"+(h>>>0).toString(36)+t.length.toString(36);}
 
 var S={view:"home",script:null,P:null,char:"",scene:"all",filter:"all",queue:[],qi:0,phase:"ask",hint:0,said:"",result:null,tally:{ok:0,rev:0},missed:[],shown:{},draft:{title:"",text:"",msg:"",err:""},confirmDel:""};
-function useScript(id){
-  var sc=allScripts().filter(function(s){return s.id===id;})[0]||BUILTIN;
-  S.script=sc;S.P=parseScript(sc.text);store.cur=sc.id;
+function setScript(sc,text){
+  S.script=sc;S.P=parseScript(text||"");store.cur=sc.id;
   var pf=store.prefs[sc.id]||{};
-  S.char=S.P.chars.indexOf(pf.char)>=0?pf.char:(S.P.chars.indexOf(sc.defChar)>=0?sc.defChar:(S.P.chars[0]||""));
+  S.char=S.P.chars.indexOf(pf.char)>=0?pf.char:(S.P.chars[0]||"");
   S.scene="all";S.filter="all";
+}
+/* elenco dei copioni nella repository */
+function repoEntry(name,sha,url){
+  return {id:"r:"+name,repo:true,name:name,sha:sha||"",url:url||(CONFIG.dir+"/"+encodeURIComponent(name)),
+    title:name.replace(/\.[^.]+$/,"").replace(/_+/g," ").trim(),docx:/\.docx$/i.test(name)};
+}
+function okName(n){return /\.(docx|txt)$/i.test(n)&&n.charAt(0)!=="."&&n.charAt(0)!=="~";}
+function listRepo(){
+  var m=location.hostname.match(/^([^.]+)\.github\.io$/i),seg=location.pathname.split("/").filter(Boolean)[0];
+  var owner=m&&seg?m[1]:CONFIG.owner,repo=m&&seg?seg:CONFIG.repo;
+  var api="https://api.github.com/repos/"+owner+"/"+repo+"/contents/"+CONFIG.dir;
+  return fetch(api,{headers:{Accept:"application/vnd.github+json"}}).then(function(r){if(!r.ok)throw new Error("api");return r.json();}).then(function(a){
+    var list=a.filter(function(f){return f.type==="file"&&okName(f.name);}).map(function(f){return {name:f.name,sha:f.sha,url:f.download_url};});
+    store.list=list;save();return list;
+  }).catch(function(){
+    if(store.list&&store.list.length)return store.list;
+    return fetch(CONFIG.dir+"/elenco.json",{cache:"no-cache"}).then(function(r){if(!r.ok)throw new Error("elenco");return r.json();})
+      .then(function(a){return a.filter(okName).map(function(n){return {name:n};});}).catch(function(){return [];});
+  }).then(function(list){
+    REPO=list.map(function(f){return repoEntry(f.name,f.sha,f.url);}).sort(function(a,b){return a.title.localeCompare(b.title);});
+  });
+}
+function scriptText(sc){
+  if(!sc.repo)return Promise.resolve(sc.text||"");
+  if(sc.text!=null)return Promise.resolve(sc.text);
+  if(sc.sha&&store.rc&&store.rc.id===sc.id&&store.rc.sha===sc.sha)return Promise.resolve(sc.text=store.rc.text);
+  function get(url){
+    return fetch(url,{cache:"no-cache"}).then(function(r){
+      if(!r.ok)throw new Error("http");
+      if(!sc.docx)return r.text();
+      return Promise.all([r.arrayBuffer(),loadMammoth()]).then(function(x){return window.mammoth.extractRawText({arrayBuffer:x[0]});}).then(function(o){return o.value;});
+    });
+  }
+  var local=CONFIG.dir+"/"+encodeURIComponent(sc.name);
+  return get(sc.url).catch(function(e){if(sc.url===local)throw e;return get(local);}).then(function(text){
+    sc.text=text;store.rc={id:sc.id,sha:sc.sha,text:text};save();return text;
+  });
+}
+function openScript(id){
+  var all=allScripts(),sc=all.filter(function(s){return s.id===id;})[0]||all[0];
+  loadErr=false;
+  if(!sc){setScript({id:"none",title:"Suggeritore",none:true},"");return Promise.resolve();}
+  app.innerHTML='<p class="muted">Carico «'+esc(sc.title)+'»…</p>';
+  return scriptText(sc).then(function(text){setScript(sc,text);},function(){loadErr=true;setScript(sc,"");});
 }
 function prog(){var a=store.prog[S.script.id]||(store.prog[S.script.id]={});return a[S.char]||(a[S.char]={});}
 function myLines(scene){
@@ -413,9 +459,11 @@ function vHome(){
   P.scenes.forEach(function(name,i){var n=myLines(i).length;if(n&&P.scenes.length>1)sceneOpts+='<option value="'+i+'"'+(String(S.scene)===String(i)?" selected":"")+">"+esc(name)+" ("+n+")</option>";});
   var pct=function(n){return st.total?(100*n/st.total):0;};
   return ''+
-  '<header class="stack"><div class="spread"><span class="eyebrow">Suggeritore</span><button class="link" data-act="library">Cambia copione</button></div>'+
+  '<header class="stack"><div class="spread"><span class="eyebrow">Suggeritore</span><button class="link" data-act="library">Gestisci copioni</button></div>'+
   '<h1 class="title">'+esc(S.script.title)+'</h1></header>'+
-  (P.lines?'':'<p class="note err">'+(loadErr&&S.script.builtin?'Non sono riuscito a caricare il copione. Controlla la connessione e ricarica la pagina.':'In questo copione non trovo battute. Apri «Cambia copione» e controlla il formato.')+'</p>')+
+  (P.lines?'':'<p class="note err">'+(S.script.none?'Non trovo copioni. Aggiungi un file .docx o .txt nella cartella «copioni» della repository, oppure caricane uno da «Gestisci copioni».':(loadErr?'Non sono riuscito a caricare questo copione. Se l’hai appena aggiunto, riprova tra un minuto.':'In questo copione non trovo battute. Apri «Gestisci copioni» e controlla il formato.'))+'</p>')+
+  (allScripts().length>1?'<div class="field"><label for="sel-script">Copione</label><select id="sel-script">'+allScripts().map(function(s){
+    return '<option value="'+esc(s.id)+'"'+(s.id===S.script.id?" selected":"")+">"+esc(s.title)+"</option>";}).join("")+'</select></div>':'')+
   '<div class="field"><label for="sel-char">Il tuo personaggio</label><select id="sel-char">'+P.chars.map(function(c){
     return '<option value="'+esc(c)+'"'+(c===S.char?" selected":"")+">"+esc(c)+" · "+P.counts[c]+(P.counts[c]===1?" battuta":" battute")+"</option>";}).join("")+'</select></div>'+
   '<div class="field"><label for="sel-scene">Scena</label><select id="sel-scene">'+sceneOpts+'</select></div>'+
@@ -500,12 +548,12 @@ function vLibrary(){
   var d=S.draft,pv=d.text.trim()?parseScript(d.text):null;
   return '<div class="bar"><button class="btn quiet" data-act="home">Indietro</button><span class="who grow">Copioni</span></div>'+
   '<div class="lib">'+allScripts().map(function(s){
-    return '<div class="lib-item'+(s.id===S.script.id?" on":"")+'"><div class="grow"><div class="name">'+esc(s.title)+'</div><div class="small muted">'+(s.id===S.script.id?"In uso":(s.builtin?"Incluso nell’app":"Aggiunto da te, solo su questo dispositivo"))+'</div></div>'+
-    (s.id===S.script.id?'':'<button class="btn quiet" data-act="use" data-v="'+s.id+'">Usa</button>')+
-    (s.builtin?'':'<button class="btn quiet" data-act="del" data-v="'+s.id+'">'+(S.confirmDel===s.id?"Confermi?":"Elimina")+'</button>')+'</div>';
+    return '<div class="lib-item'+(s.id===S.script.id?" on":"")+'"><div class="grow"><div class="name">'+esc(s.title)+'</div><div class="small muted">'+(s.id===S.script.id?"In uso":(s.repo?"Dalla repository":"Aggiunto da te, solo su questo dispositivo"))+'</div></div>'+
+    (s.id===S.script.id?'':'<button class="btn quiet" data-act="use" data-v="'+esc(s.id)+'">Usa</button>')+
+    (s.repo?'':'<button class="btn quiet" data-act="del" data-v="'+s.id+'">'+(S.confirmDel===s.id?"Confermi?":"Elimina")+'</button>')+'</div>';
   }).join("")+'</div>'+
-  '<section class="panel"><h2 class="who">Aggiungi un altro copione</h2>'+
-  '<p class="small muted">Carica un file Word (.docx) o di testo, oppure incolla il copione. Resta salvato solo su questo dispositivo.</p>'+
+  '<section class="panel"><h2 class="who">Aggiungi un copione solo per te</h2>'+
+  '<p class="small muted">Carica un file Word (.docx) o di testo, oppure incolla il copione. Resta salvato solo su questo dispositivo. Per renderlo disponibile a tutti va messo nella cartella «copioni» della repository.</p>'+
   '<div class="field"><label for="in-file">File</label><input type="file" id="in-file" accept=".docx,.txt,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></div>'+
   (d.msg?'<p class="note">'+esc(d.msg)+'</p>':'')+(d.err?'<p class="note err">'+esc(d.err)+'</p>':'')+
   '<div class="field"><label for="in-title">Titolo</label><input type="text" id="in-title" value="'+esc(d.title)+'" placeholder="Titolo dello spettacolo"></div>'+
@@ -569,11 +617,11 @@ var ACT={
   "hear-after":function(){var a=ctxAfter(S.queue[S.qi]),l=a[a.length-1];if(l&&l.type==="line")say([l.text],true);},
   stopvoice:function(){hush();},
   unveil:function(v){S.shown[v]=1;render();},
-  use:function(v){useScript(v);save();go("home");},
+  use:function(v){openScript(v).then(function(){save();go("home");});},
   del:function(v){
     if(S.confirmDel!==v){S.confirmDel=v;render();return;}
     store.scripts=store.scripts.filter(function(s){return s.id!==v;});delete store.prog[v];delete store.prefs[v];S.confirmDel="";
-    if(S.script.id===v)useScript("builtin");
+    if(S.script.id===v){openScript("").then(function(){save();render();});return;}
     save();render();
   },
   add:function(){
@@ -581,7 +629,7 @@ var ACT={
     var id=hashId(text),title=d.title.trim()||"Copione senza titolo";
     store.scripts=store.scripts.filter(function(s){return s.id!==id;});
     store.scripts.push({id:id,title:title,text:text});
-    useScript(id);save();go("home");
+    openScript(id).then(function(){save();go("home");});
   }
 };
 document.addEventListener("click",function(e){
@@ -591,6 +639,7 @@ document.addEventListener("click",function(e){
 document.addEventListener("change",function(e){
   var t=e.target;
   if(t.id==="sel-char"){S.char=t.value;S.scene="all";S.filter="all";(store.prefs[S.script.id]=store.prefs[S.script.id]||{}).char=S.char;save();render();}
+  else if(t.id==="sel-script"){hush();openScript(t.value).then(function(){save();render();});}
   else if(t.id==="sel-scene"){S.scene=t.value;S.filter="all";render();}
   else if(t.id==="chk-voice"){store.voice=t.checked;save();if(!t.checked)hush();}
   else if(t.id==="chk-hide"){store.hide=t.checked;S.shown={};save();render();}
@@ -634,9 +683,7 @@ function readFile(f){
   });
 }
 
-fetch(CONFIG.file).then(function(r){if(!r.ok)throw new Error("http");return r.text();}).then(function(tx){BUILTIN.text=tx;},function(){loadErr=true;}).then(function(){
-  useScript(store.cur);render();
-});
+listRepo().then(function(){return openScript(store.cur);}).then(function(){save();render();});
 </script>
 </body>
 </html>

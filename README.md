@@ -1,15 +1,19 @@
 # Suggeritore
 
-App web per imparare le battute di un personaggio. Copione incluso: *Ritorno all'Olimpo*.
+App web per imparare le battute di un personaggio. I copioni stanno nella cartella `copioni/`.
 
 Si apre dal browser, senza installare nulla. Ogni attore sceglie il proprio personaggio, sente o legge la battuta prima, dice la sua, e vede subito la battuta giusta e quella dopo. Scrivendo o dettando la battuta, l'app segnala le parole saltate.
 
-## Cambiare spettacolo
+## Aggiungere un copione
 
-1. Sostituisci `copione.txt` con il nuovo copione.
-2. In `index.html` cambia il titolo nella riga `var CONFIG={title:"...",file:"copione.txt"};`.
+Carica il file nella cartella `copioni/` della repository: Word (`.docx`) o testo (`.txt`). Compare da solo nell'elenco «Copione» dell'app, e ognuno può scegliere lì il copione e poi il proprio personaggio.
 
-Ogni attore può anche caricare un copione solo per sé (file .docx o .txt) da «Cambia copione» dentro l'app.
+- Il nome del file diventa il titolo: `Ritorno all'Olimpo.docx` appare come «Ritorno all'Olimpo».
+- Per togliere un copione basta cancellare il file.
+- Dopo il caricamento può servire un minuto prima che sia visibile.
+- L'elenco viene letto da GitHub e funziona quando la repository è pubblica. `copioni/elenco.json` è solo una riserva, usata se GitHub non risponde.
+
+Ogni attore può anche caricare un copione solo per sé da «Gestisci copioni» dentro l'app.
 
 ## Formato del copione
 
