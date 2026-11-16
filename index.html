@@ -145,6 +145,17 @@ select:focus,textarea:focus,input:focus{border-color:var(--ink);outline:none}
 .qcard{display:flex;flex-direction:column;gap:12px;padding-bottom:24px;border-bottom:2px solid var(--line)}
 .qcard .block .who{font-size:17px}
 .qcard .block .say{font-size:16px}
+.tile .tnum{font-family:var(--display);font-weight:900;font-size:34px;line-height:1;font-variant-numeric:tabular-nums;margin-bottom:4px}
+.tile .lab{font-size:13px;letter-spacing:.08em}
+.bars{display:flex;flex-direction:column;gap:8px}
+.brow{display:grid;grid-template-columns:minmax(0,36%) minmax(40px,1fr) auto;gap:8px;align-items:center;font-size:14px}
+.bl{overflow-wrap:anywhere;line-height:1.2}
+.bt{height:10px;background:var(--line);border-radius:5px;overflow:hidden}
+.bt i{display:block;height:100%;background:var(--ink);border-radius:5px}
+.bv{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+.brow.me .bl{font-weight:700;color:var(--accent)} .brow.me .bt i{background:var(--accent)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--miss-bg);border-radius:999px;padding:3px 10px;font-size:15px}
 .note{border-left:4px solid var(--spot);padding:6px 0 6px 12px;font-size:15px}
 .err{border-left-color:var(--accent)}
 .lib{display:flex;flex-direction:column;gap:8px}
@@ -279,7 +290,7 @@ function compare(expected,said){
 /* ---------- stato ---------- */
 var KEY="suggeritore.v1";
 var REPO=[];
-var store={scripts:[],cur:"",prefs:{},prog:{},ctx:1,voice:true,hide:true,list:null,rc:null};
+var store={scripts:[],cur:"",prefs:{},prog:{},ctx:1,voice:true,hide:true,list:null,rc:null,att:{},mw:{}};
 try{var saved=JSON.parse(localStorage.getItem(KEY)||"null");if(saved&&typeof saved==="object")Object.assign(store,saved);}catch(e){}
 var saveFailed=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(store));saveFailed=false;}catch(e){saveFailed=true;}}
@@ -338,6 +349,8 @@ function openScript(id){
   return scriptText(sc).then(function(text){setScript(sc,text);},function(){loadErr=true;setScript(sc,"");});
 }
 function prog(){var a=store.prog[S.script.id]||(store.prog[S.script.id]={});return a[S.char]||(a[S.char]={});}
+function att(){var a=store.att[S.script.id]||(store.att[S.script.id]={});return a[S.char]||(a[S.char]={});}
+function mw(){var a=store.mw[S.script.id]||(store.mw[S.script.id]={});return a[S.char]||(a[S.char]={});}
 function myLines(scene){
   var out=[];
   S.P.items.forEach(function(x,i){if(x.type==="line"&&x.chars.indexOf(S.char)>=0&&(scene==="all"||x.scene===+scene))out.push(i);});
@@ -476,7 +489,8 @@ function vHome(){
   '<div class="stack"><button class="btn primary" data-act="start"'+(q?"":" disabled")+'>Inizia la prova'+(q?" · "+q:"")+'</button>'+
   (q?'':'<p class="small muted">Nessuna battuta con questa scelta. Cambia scena o filtro.</p>')+
   '<button class="btn" data-act="quick"'+(q?"":" disabled")+'>Ripasso veloce</button>'+
-  '<button class="btn" data-act="read">Leggi il copione</button></div>'+
+  '<button class="btn" data-act="read">Leggi il copione</button>'+
+  '<button class="btn" data-act="stats"'+(P.lines?"":" disabled")+'>Statistiche</button></div>'+
   (saveFailed?'<p class="note err">Non riesco a salvare i progressi su questo dispositivo: valgono finché tieni aperta la pagina.</p>':'');
 }
 function vProva(){
@@ -544,6 +558,98 @@ function vQuick(){
   });
   return h+"</div>";
 }
+/* ---------- statistiche ---------- */
+function wc(text){return tokens(text).filter(function(k){return !k.dir;}).length;}
+function num(n){return Number(n).toLocaleString("it-IT",{maximumFractionDigits:1});}
+function voiceTime(w){var s=Math.round(w/130*60);return s<60?s+" s":Math.floor(s/60)+" min"+(s%60?" "+(s%60)+" s":"");}
+function excerpt(text,n){var w=tokens(text).filter(function(k){return !k.dir;}).map(function(k){return k.t;});return w.slice(0,n).join(" ")+(w.length>n?" …":"");}
+function nearLine(i,step){
+  for(var k=i+step;k>=0&&k<S.P.items.length;k+=step){var x=S.P.items[k];if(x.type==="scene")return null;if(x.type==="line")return x;}
+  return null;
+}
+function topOf(o,n){return Object.keys(o).sort(function(a,b){return o[b]-o[a]||a.localeCompare(b);}).slice(0,n).map(function(k){return [k,o[k]];});}
+function charStats(c){
+  var P=S.P,r={ids:[],w:{},tot:0,scene:{},from:{},to:{},dirCue:0,gap:{n:0,a:-1,b:-1},longest:{w:-1,i:-1},bk:[0,0,0],cast:{},all:0};
+  var lastMine=-1,others=0;
+  P.items.forEach(function(x,i){
+    if(x.type!=="line")return;
+    var w=wc(x.text);r.all+=w;
+    x.chars.forEach(function(ch){r.cast[ch]=(r.cast[ch]||0)+w;});
+    if(x.chars.indexOf(c)<0){others++;return;}
+    r.ids.push(i);r.w[i]=w;r.tot+=w;
+    var s=r.scene[x.scene]||(r.scene[x.scene]={n:0,w:0,ok:0});s.n++;s.w+=w;
+    if(w>r.longest.w)r.longest={w:w,i:i};
+    r.bk[w<=5?0:(w<=30?1:2)]++;
+    if(lastMine>=0&&others>r.gap.n)r.gap={n:others,a:lastMine,b:i};
+    lastMine=i;others=0;
+    var pv=nearLine(i,-1),nx=nearLine(i,1),before=P.items[i-1];
+    if(!before||before.type!=="line")r.dirCue++;
+    if(pv&&pv.chars.indexOf(c)<0)r.from[pv.speaker]=(r.from[pv.speaker]||0)+1;
+    if(nx&&nx.chars.indexOf(c)<0)r.to[nx.speaker]=(r.to[nx.speaker]||0)+1;
+  });
+  return r;
+}
+function barRow(label,val,max,right,me){
+  return '<div class="brow'+(me?" me":"")+'"><span class="bl">'+esc(label)+'</span><span class="bt"><i style="width:'+(max?100*val/max:0)+'%"></i></span><span class="bv">'+esc(right)+'</span></div>';
+}
+function tile(n,label){return '<div class="tile"><div class="tnum">'+esc(n)+'</div><div class="lab">'+esc(label)+'</div></div>';}
+function vStats(){
+  var P=S.P,c=S.char,r=charStats(c),p=prog(),a=att(),n=r.ids.length;
+  var h='<div class="bar"><button class="btn quiet" data-act="home">Indietro</button><span class="who grow">Statistiche</span></div>'+
+    '<header class="stack"><span class="eyebrow">'+esc(S.script.title)+'</span><h1 class="title">'+esc(c)+'</h1></header>';
+  if(!n)return h+'<p class="note">Questo personaggio non ha battute.</p>';
+  var sn=function(i){return P.scenes[P.items[i].scene]||"";};
+  /* la parte */
+  h+='<h2 class="scene-h">La parte</h2><div class="tiles">'+tile(num(r.tot),"Parole in totale")+tile(num(n),"Battute")+tile(num(r.tot/n),"Parole per battuta")+tile(voiceTime(r.tot),"Tempo a voce")+'</div>'+
+    '<p class="small"><b>Battuta più lunga:</b> '+r.longest.w+' parole, '+esc(sn(r.longest.i))+'. <span class="muted">«'+esc(excerpt(P.items[r.longest.i].text,12))+'»</span></p>'+
+    '<div class="bars">'+barRow("Brevi, fino a 5 parole",r.bk[0],n,String(r.bk[0]))+barRow("Medie, da 6 a 30",r.bk[1],n,String(r.bk[1]))+barRow("Lunghe, oltre 30",r.bk[2],n,String(r.bk[2]))+'</div>'+
+    '<p class="small muted">Il tempo a voce conta circa 130 parole al minuto.</p>';
+  /* scene */
+  var sk=Object.keys(r.scene).map(Number).sort(function(x,y){return x-y;}),maxW=Math.max.apply(null,sk.map(function(k){return r.scene[k].w;}));
+  h+='<h2 class="scene-h">Scena per scena</h2><p class="small">Parla in '+sk.length+(sk.length===1?" scena":" scene")+' su '+P.scenes.length+
+    (sk.length>1?': la prima è '+esc(P.scenes[sk[0]])+', l’ultima '+esc(P.scenes[sk[sk.length-1]])+'.':'.')+'</p><div class="bars">'+
+    sk.map(function(k){var s=r.scene[k];return barRow(P.scenes[k],s.w,maxW,s.n+" batt. · "+num(s.w)+" par.");}).join("")+'</div>';
+  if(r.gap.n){
+    var ga=sn(r.gap.a),gb=sn(r.gap.b);
+    h+='<p class="small"><b>Pausa più lunga:</b> '+r.gap.n+' battute degli altri, '+(ga===gb?'in '+esc(ga):'da '+esc(ga)+' a '+esc(gb))+'. <span class="muted">Riprendi con «'+esc(excerpt(P.items[r.gap.b].text,8))+'»</span></p>';
+  }
+  /* con chi */
+  var lst=function(o){var t=topOf(o,3);return t.length?t.map(function(e){return esc(e[0])+" ("+e[1]+")";}).join(", "):"nessuno";};
+  h+='<h2 class="scene-h">Con chi reciti</h2>'+
+    '<p class="small"><b>Ti danno la battuta:</b> '+lst(r.from)+'</p>'+
+    '<p class="small"><b>Passi la parola a:</b> '+lst(r.to)+'</p>'+
+    '<p class="small"><b>Battute che partono da una didascalia:</b> '+r.dirCue+' su '+n+'. <span class="muted">Entrate, musiche, azioni: sono le più facili da mancare.</span></p>';
+  /* progressi */
+  var okN=0,okW=0,tries=0,sum=0,worst=[];
+  r.ids.forEach(function(i){
+    if(p[i]==="ok"){okN++;okW+=r.w[i];r.scene[P.items[i].scene].ok+=r.w[i];}
+    var x=a[i];if(!x)return;
+    tries+=x.n||0;sum+=x.sum||0;
+    if(x.rev)worst.push([i,x.rev,x.n?x.sum/x.n:1]);
+  });
+  worst.sort(function(x,y){return y[1]-x[1]||x[2]-y[2];});
+  var touched=Object.keys(p).some(function(k){return r.w[k]!=null;});
+  h+='<h2 class="scene-h">A che punto sei</h2><div class="tiles">'+tile(Math.round(100*okW/(r.tot||1))+"%","Imparato, in parole")+tile(Math.round(100*okN/n)+"%","Imparato, in battute")+
+    tile(tries?Math.round(100*sum/tries)+"%":"–","Precisione media")+tile(num(tries),"Prove con controllo")+'</div>';
+  if(!touched)h+='<p class="small muted">Il resto compare dopo le prime prove.</p>';
+  else{
+    if(sk.length>1){
+      var rank=sk.slice().sort(function(x,y){return r.scene[y].ok/r.scene[y].w-r.scene[x].ok/r.scene[x].w||x-y;}),pc=function(k){return Math.round(100*r.scene[k].ok/(r.scene[k].w||1))+"%";};
+      var best=rank[0],weak=rank[rank.length-1];
+      h+='<p class="small"><b>Scena più solida:</b> '+esc(P.scenes[best])+' ('+pc(best)+')<br><b>Scena più debole:</b> '+esc(P.scenes[weak])+' ('+pc(weak)+')</p>';
+    }
+    if(worst.length)h+='<div class="stack"><span class="lab">Battute più sbagliate</span>'+worst.slice(0,3).map(function(e){
+      return '<p class="small">«'+esc(excerpt(P.items[e[0]].text,10))+'» <span class="muted">'+esc(sn(e[0]))+' · '+e[1]+(e[1]===1?" volta":" volte")+' da ripassare</span></p>';}).join("")+'</div>';
+    var mwt=topOf(mw(),10);
+    if(mwt.length)h+='<div class="stack"><span class="lab">Parole che salti più spesso</span><div class="chips">'+mwt.map(function(e){return '<span class="chip">'+esc(e[0])+' · '+e[1]+'</span>';}).join("")+'</div></div>';
+    else h+='<p class="small muted">Le parole saltate compaiono quando scrivi o detti la battuta e premi Controlla.</p>';
+  }
+  /* cast */
+  var cast=topOf(r.cast,999),mx=cast.length?cast[0][1]:0,pos=cast.map(function(e){return e[0];}).indexOf(c)+1;
+  h+='<h2 class="scene-h">Nel cast</h2><p class="small">'+esc(c)+' è al '+pos+'° posto su '+cast.length+' per parole, con il '+num(100*r.tot/(r.all||1))+'% del copione.</p><div class="bars">'+
+    cast.map(function(e){return barRow(e[0],e[1],mx,num(e[1])+" · "+num(100*e[1]/(r.all||1))+"%",e[0]===c);}).join("")+'</div>';
+  return h;
+}
 function vLibrary(){
   var d=S.draft,pv=d.text.trim()?parseScript(d.text):null;
   return '<div class="bar"><button class="btn quiet" data-act="home">Indietro</button><span class="who grow">Copioni</span></div>'+
@@ -570,7 +676,7 @@ function previewText(pv){
 }
 function render(){
   var v=S.view;
-  app.innerHTML=v==="prova"?vProva():v==="end"?vEnd():v==="read"?vRead():v==="quick"?vQuick():v==="library"?vLibrary():vHome();
+  app.innerHTML=v==="prova"?vProva():v==="end"?vEnd():v==="read"?vRead():v==="quick"?vQuick():v==="stats"?vStats():v==="library"?vLibrary():vHome();
 }
 function go(v){hush();S.view=v;render();window.scrollTo(0,0);}
 
@@ -588,6 +694,12 @@ function reveal(){
   var idx=S.queue[S.qi],it=S.P.items[idx];
   S.result=S.said.trim()?compare(it.text,S.said):null;
   if(S.result&&!S.result.total)S.result=null;
+  if(S.result){
+    var a=att(),x=a[idx]||(a[idx]={n:0,sum:0,rev:0,ok:0}),m=mw();
+    x.n++;x.sum+=S.result.score;
+    S.result.toks.forEach(function(k){if(k.miss&&!k.dir)norm(k.t).forEach(function(w){if(w.length>=3)m[w]=(m[w]||0)+1;});});
+    save();
+  }
   S.phase="shown";render();
   var after=ctxAfter(idx),last=after[after.length-1];
   if(last&&last.type==="line"&&last.chars.indexOf(S.char)<0)say([last.text]);
@@ -597,6 +709,7 @@ var ACT={
   library:function(){S.draft={title:"",text:"",msg:"",err:""};S.confirmDel="";go("library");},
   read:function(){S.shown={};go("read");},
   quick:function(){if(buildQueue().length)go("quick");},
+  stats:function(){go("stats");},
   start:function(){begin(buildQueue());},
   retry:function(){begin(S.missed.slice());},
   filter:function(v){S.filter=v;render();},
@@ -608,7 +721,8 @@ var ACT={
     if(DICT&&DICT.active()){DICT.stop().then(reveal,reveal);}else reveal();
   },
   mark:function(v){
-    var idx=S.queue[S.qi];prog()[idx]=v;save();
+    var idx=S.queue[S.qi],a=att(),x=a[idx]||(a[idx]={n:0,sum:0,rev:0,ok:0});x[v]=(x[v]||0)+1;
+    prog()[idx]=v;save();
     S.tally[v]++;if(v==="rev")S.missed.push(idx);
     hush();
     if(++S.qi>=S.queue.length){S.view="end";render();window.scrollTo(0,0);}else card();
@@ -620,7 +734,7 @@ var ACT={
   use:function(v){openScript(v).then(function(){save();go("home");});},
   del:function(v){
     if(S.confirmDel!==v){S.confirmDel=v;render();return;}
-    store.scripts=store.scripts.filter(function(s){return s.id!==v;});delete store.prog[v];delete store.prefs[v];S.confirmDel="";
+    store.scripts=store.scripts.filter(function(s){return s.id!==v;});delete store.prog[v];delete store.prefs[v];delete store.att[v];delete store.mw[v];S.confirmDel="";
     if(S.script.id===v){openScript("").then(function(){save();render();});return;}
     save();render();
   },
