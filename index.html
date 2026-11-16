@@ -141,6 +141,10 @@ select:focus,textarea:focus,input:focus{border-color:var(--ink);outline:none}
 .veil{border:0;text-align:left;width:100%;min-height:44px;border-radius:8px;color:#fff;padding:8px 12px;font-size:15px;
   background:repeating-linear-gradient(90deg,var(--curtain-a) 0 22px,var(--curtain-b) 22px 30px,var(--curtain-a) 30px 44px)}
 
+.quick{display:flex;flex-direction:column;gap:24px}
+.qcard{display:flex;flex-direction:column;gap:12px;padding-bottom:24px;border-bottom:2px solid var(--line)}
+.qcard .block .who{font-size:17px}
+.qcard .block .say{font-size:16px}
 .note{border-left:4px solid var(--spot);padding:6px 0 6px 12px;font-size:15px}
 .err{border-left-color:var(--accent)}
 .lib{display:flex;flex-direction:column;gap:8px}
@@ -423,6 +427,7 @@ function vHome(){
   (canSpeak()?'<label class="switch" for="chk-voice"><input type="checkbox" id="chk-voice"'+(store.voice?" checked":"")+'><span>Leggi ad alta voce la battuta prima e quella dopo</span></label>':'')+
   '<div class="stack"><button class="btn primary" data-act="start"'+(q?"":" disabled")+'>Inizia la prova'+(q?" · "+q:"")+'</button>'+
   (q?'':'<p class="small muted">Nessuna battuta con questa scelta. Cambia scena o filtro.</p>')+
+  '<button class="btn" data-act="quick"'+(q?"":" disabled")+'>Ripasso veloce</button>'+
   '<button class="btn" data-act="read">Leggi il copione</button></div>'+
   (saveFailed?'<p class="note err">Non riesco a salvare i progressi su questo dispositivo: valgono finché tieni aperta la pagina.</p>':'');
 }
@@ -480,6 +485,17 @@ function vRead(){
   });
   return h+"</div>";
 }
+function vQuick(){
+  var q=buildQueue(),last=-1,h='<div class="bar"><button class="btn quiet" data-act="home">Indietro</button><span class="who grow">Ripasso veloce</span><span class="small muted">'+q.length+(q.length===1?" battuta":" battute")+'</span></div><div class="quick">';
+  q.forEach(function(idx){
+    var it=S.P.items[idx];
+    if(it.scene!==last){last=it.scene;if(S.P.scenes.length>1)h+='<h2 class="scene-h">'+esc(S.P.scenes[it.scene])+"</h2>";}
+    h+='<article class="qcard"><div class="block"><span class="lab">Prima</span>'+ctxBefore(idx,store.ctx).map(itemHTML).join("")+'</div>'+
+      '<div class="mine"><span class="who">'+esc(it.speaker)+'</span><p class="say">'+lineHTML(it.text)+'</p></div>'+
+      '<div class="block"><span class="lab">Dopo</span>'+ctxAfter(idx).map(itemHTML).join("")+'</div></article>';
+  });
+  return h+"</div>";
+}
 function vLibrary(){
   var d=S.draft,pv=d.text.trim()?parseScript(d.text):null;
   return '<div class="bar"><button class="btn quiet" data-act="home">Indietro</button><span class="who grow">Copioni</span></div>'+
@@ -506,7 +522,7 @@ function previewText(pv){
 }
 function render(){
   var v=S.view;
-  app.innerHTML=v==="prova"?vProva():v==="end"?vEnd():v==="read"?vRead():v==="library"?vLibrary():vHome();
+  app.innerHTML=v==="prova"?vProva():v==="end"?vEnd():v==="read"?vRead():v==="quick"?vQuick():v==="library"?vLibrary():vHome();
 }
 function go(v){hush();S.view=v;render();window.scrollTo(0,0);}
 
@@ -532,6 +548,7 @@ var ACT={
   home:function(){if(DICT&&DICT.active())DICT.stop();go("home");},
   library:function(){S.draft={title:"",text:"",msg:"",err:""};S.confirmDel="";go("library");},
   read:function(){S.shown={};go("read");},
+  quick:function(){if(buildQueue().length)go("quick");},
   start:function(){begin(buildQueue());},
   retry:function(){begin(S.missed.slice());},
   filter:function(v){S.filter=v;render();},
